@@ -134,9 +134,9 @@ def main(argv):
 
 		markers = detect_markers(frame)
 
-		print(frame.shape) #(720, 1280,3)
+		# print(frame.shape) #(720, 1280,3) (1080, 1920, 3)
 
-		image = frame
+		image = frame.copy()
 		frame_size = frame.shape
 		marker_num = len(markers)
 		# if information_visual == True:
@@ -186,7 +186,7 @@ def main(argv):
 			p2_r = random.randint(1,10)
 			if p1_r % 10 == 3:
 				p1_b.append(bullet([p1_center[0],p1_center[1]], p1_pose[p1_rotation][0] - p1_center, frame_size[:-1]))
-			if p2_r % 10 ==5:
+			if p2_r % 10 == 3:
 				p2_b.append(bullet([p2_center[0],p2_center[1]], p2_pose[p2_rotation][0] - p2_center, frame_size[:-1]))
 
 			for i in p1_b:
@@ -194,26 +194,31 @@ def main(argv):
 				if d == 3:
 					p1_b.remove(i)
 				else:
-					if hit_box[round(i.pos[1]), round(i.pos[0])] == 2:
-						cv2.fillPoly(frame, [p2_pose], (60, 60, 200))
-						cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (255, 255, 255), 15)
-						p2_hp -= 10
-						p1_b.remove(i)
-					else:
-						cv2.line(frame, (round(i.pos[0]), round(i.pos[1])),(round(i.pos[0]), round(i.pos[1])), (200,0,125),10)
+					if round(i.pos[1]) > 0 and round(i.pos[1]) < frame_size[1] and round(i.pos[0]) > 0 and round(i.pos[0]) < frame_size[0]:
+						if hit_box[round(i.pos[1]), round(i.pos[0])] == 2:
+							cv2.fillPoly(frame, [p2_pose], (60, 60, 200))
+							cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (255, 255, 255), 15)
+							p2_hp -= 10
+							p1_b.remove(i)
+						else:
+							cv2.line(frame, (round(i.pos[0]), round(i.pos[1])),(round(i.pos[0]), round(i.pos[1])), (200,0,125),10)
+					# else:q
 				# print((round(i.pos[0]), round(i.pos[1])))
 			for i in p2_b:
 				d = i.move()
 				if d == 3:
 					p2_b.remove(i)
 				else:
-					if hit_box[round(i.pos[1]), round(i.pos[0])] == 1:
-						cv2.fillPoly(frame, [p1_pose], (200, 60, 60))
-						cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (255, 255, 255), 15)
-						p1_hp -= 10
-						p2_b.remove(i)
-					else:
-						cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (125, 0, 200), 10)
+					if round(i.pos[1]) > 0 and round(i.pos[1]) < frame_size[1] and round(i.pos[0]) > 0 and round(i.pos[0]) <frame_size[0]:
+						if hit_box[round(i.pos[1]), round(i.pos[0])] == 1:
+							cv2.fillPoly(frame, [p1_pose], (200, 60, 60))
+							cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (255, 255, 255), 15)
+							p1_hp -= 10
+							p2_b.remove(i)
+						else:
+							cv2.line(frame, (round(i.pos[0]), round(i.pos[1])), (round(i.pos[0]), round(i.pos[1])), (125, 0, 200), 10)
+					# else:
+					# 	p1_b.remove(i)
 			if p1_hp <= 0:
 				p1_hp = 0
 				info = 2
@@ -312,7 +317,8 @@ def main(argv):
 			if results.multi_hand_landmarks:
 				for hand_landmarks in results.multi_hand_landmarks:
 					mp_drawing.draw_landmarks(
-						image,
+						# image,
+						frame,
 						hand_landmarks,
 						mp_hands.HAND_CONNECTIONS,
 						mp_drawing_styles.get_default_hand_landmarks_style(),
@@ -323,7 +329,7 @@ def main(argv):
 					elif hit_box[round(hand_landmarks.landmark[12].y*frame_size[0])][round(hand_landmarks.landmark[8].x*frame_size[1])] == 2:
 						p2_b.append(bullet([p2_center[0], p2_center[1]], p2_pose[p2_rotation][0] - p2_center, frame_size[:-1]))
 
-			frame = image
+			# frame = image
 
 		if information_visual == True:
 			cv2.imshow('Test Frame2', hit_box)
