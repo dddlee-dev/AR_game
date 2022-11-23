@@ -4,6 +4,7 @@ import sys, getopt
 import time
 import numpy as np
 import random
+import math
 
 try:
 	import cv2
@@ -11,9 +12,106 @@ try:
 except ImportError:
 	raise Exception('Error: OpenCv is not installed')
 
-information_visual = True
-# information_visual = False
+# information_visual = True
+information_visual = False
 cam = 1 # default = 0
+
+class OBJ:
+    def __init__(self, filename, swapyz=False):
+        """Loads a Wavefront OBJ file. """
+        self.vertices = []
+        self.normals = []
+        self.texcoords = []
+        self.faces = []
+        material = None
+        for line in open(filename, "r"):
+            if line.startswith('#'): continue
+            values = line.split()
+            if not values: continue
+            if values[0] == 'v':
+                v = list(map(float, values[1:4]))
+                if swapyz:
+                    v = v[0], v[2], v[1]
+                self.vertices.append(v)
+            elif values[0] == 'vn':
+                v = list(map(float, values[1:4]))
+                if swapyz:
+                    v = v[0], v[2], v[1]
+                self.normals.append(v)
+            elif values[0] == 'vt':
+                self.texcoords.append(map(float, values[1:3]))
+#             elif values[0] in ('usemtl', 'usemat'):
+#                 material = values[1]
+#             elif values[0] == 'mtllib':
+#                 self.mtl = MTL(filename.replace(".obj",".mtl"))
+            elif values[0] == 'f':
+                face = []
+                texcoords = []
+                norms = []
+                for v in values[1:]:
+                    w = v.split('/')
+                    face.append(int(w[0]))
+                    if len(w) >= 2 and len(w[1]) > 0:
+                        texcoords.append(int(w[1]))
+                    else:
+                        texcoords.append(0)
+                    if len(w) >= 3 and len(w[2]) > 0:
+                        norms.append(int(w[2]))
+                    else:
+                        norms.append(0)
+                #self.faces.append((face, norms, texcoords, material))
+                self.faces.append((face, norms, texcoords))
+def renderObj(img, obj, projection, color=False):
+    """
+    Render a loaded obj model into the current video frame
+    """
+    vertices = obj.vertices
+    scale_matrix = np.eye(3) * 3
+    h, w = (644,372)
+    for face in obj.faces:
+        face_vertices = face[0]
+        points = np.array([vertices[vertex - 1] for vertex in face_vertices])
+        points = np.dot(points, scale_matrix)
+        # render model in the middle of the reference surface. To do so,
+        # model points must be displaced
+        points = np.array([[p[0] + w / 2, p[1] + h / 2, p[2]] for p in points])
+        dst = cv2.perspectiveTransform(points.reshape(-1, 1, 3), projection)
+        imgpts = np.int32(dst)
+        if color is False:
+            cv2.fillConvexPoly(img, imgpts, color)
+        else:
+#             color = hex_to_rgb(face[-1])
+            color = face[-1]
+            color = color[::-1]  # reverse
+            cv2.fillConvexPoly(img, imgpts, color)
+
+    return img
+def projection_matrix(camera_parameters, homography):
+    """
+    From the camera calibration matrix and the estimated homography
+    compute the 3D projection matrix
+    """
+    # Compute rotation along the x and y axis as well as the translation
+    homography = homography * (-1)
+    rot_and_transl = np.dot(np.linalg.inv(camera_parameters), homography)
+    col_1 = rot_and_transl[:, 0]
+    col_2 = rot_and_transl[:, 1]
+    col_3 = rot_and_transl[:, 2]
+    # normalise vectors
+    l = math.sqrt(np.linalg.norm(col_1, 2) * np.linalg.norm(col_2, 2))
+    rot_1 = col_1 / l
+    rot_2 = col_2 / l
+    translation = col_3 / l
+    # compute the orthonormal basis
+    c = rot_1 + rot_2
+    p = np.cross(rot_1, rot_2)
+    d = np.cross(c, p)
+    rot_1 = np.dot(c / np.linalg.norm(c, 2) + d / np.linalg.norm(d, 2), 1 / math.sqrt(2))
+    rot_2 = np.dot(c / np.linalg.norm(c, 2) - d / np.linalg.norm(d, 2), 1 / math.sqrt(2))
+    rot_3 = np.cross(rot_1, rot_2)
+    # finally, compute the 3D projection matrix from the model to the current frame
+    projection = np.stack((rot_1, rot_2, rot_3, translation)).T
+    return np.dot(camera_parameters, projection)
 
 class bullet():
 	def __init__(self, pos, vec, size):
@@ -106,6 +204,12 @@ def main(argv):
 	p2_rotation = 0
 	p1_b = []
 	p2_b = []
+	p1_ani = -1
+	p2_ani = -1
+	# ani = ['boy.obj', 'cow.obj', 'fox.obj', 'rat.obj', 'wolf.obj', 'pirate-ship-fat.obj']
+	ani = ['boy.obj', 'fox.obj', 'rat.obj', 'wolf.obj', 'pirate-ship-fat.obj']
+	obj1 = []
+	obj2 = []
 
 	p1_id = 2495
 	p2_id = 482
@@ -120,6 +224,14 @@ def main(argv):
 	info_time = 0
 
 	hit_box = np.zeros((1080, 1920))
+	camera_parameters = np.array([[800, 0, 320],
+																[0, 800, 240],
+																[0, 0, 1]])
+	src_val = 800
+	src_pts = np.float32([0, 0,
+												src_val, 0,
+												src_val, src_val,
+												0, src_val]).reshape(-1, 1, 2)
 
 	print('Press "q" to quit')
 	capture = cv2.VideoCapture(cam)
@@ -152,6 +264,10 @@ def main(argv):
 						game_play = True
 						start_time = time.time()
 						info = 1
+						p1_ani = random.randint(0,len(ani))
+						p2_ani = random.randint(0, len(ani))
+						obj1 = OBJ('./'+ani[p1_ani], swapyz=True)
+						obj2 = OBJ('./'+ani[p2_ani], swapyz=True)
 
 			else:
 				if start_count > 0:
@@ -177,10 +293,28 @@ def main(argv):
 				cv2.fillPoly(hit_box, [p1_pose], 1)
 				# print(p1_center, p1_pose)
 				cv2.line(frame, p1_center, p1_pose[p1_rotation][0], 5 )
+
+
+
+				dst_pts = np.float32([p1_pose]).reshape(-1, 1, 2)
+				dst_pts = dst_pts.round(2)
+				# print('5', src_pts, dst_pts)
+				homography, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+				projection = projection_matrix(camera_parameters, homography)
+				frame = renderObj(frame, obj1, projection, (230, 20, 20))
+
 			if len(p2_pose) == 4:
 				cv2.fillPoly(frame, [p2_pose], (0, 0, 255))
 				cv2.fillPoly(hit_box, [p2_pose], 2)
 				cv2.line(frame, p2_center, p2_pose[p2_rotation][0], 5)
+
+
+				dst_pts = np.float32([p2_pose]).reshape(-1, 1, 2)
+				dst_pts = dst_pts.round(2)
+				# print('5', src_pts, dst_pts)
+				homography, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+				projection = projection_matrix(camera_parameters, homography)
+				frame = renderObj(frame, obj2, projection, (20, 20, 230))
 
 			p1_r = random.randint(1,10)
 			p2_r = random.randint(1,10)
@@ -188,6 +322,8 @@ def main(argv):
 				p1_b.append(bullet([p1_center[0],p1_center[1]], p1_pose[p1_rotation][0] - p1_center, frame_size[:-1]))
 			if p2_r % 10 == 3:
 				p2_b.append(bullet([p2_center[0],p2_center[1]], p2_pose[p2_rotation][0] - p2_center, frame_size[:-1]))
+
+
 
 			for i in p1_b:
 				d = i.move()
@@ -244,6 +380,8 @@ def main(argv):
 		cv2.rectangle(frame, (int(frame_size[1] * 0.56), int(frame_size[0] * 0.05)), (int(frame_size[1] * 0.96), int(frame_size[0] * 0.10)),
 									(0,0,0), 3)
 
+
+
 		if game_play == True:
 			play_time = 120 - (time.time() - start_time)
 			if play_time < 0:
@@ -272,6 +410,8 @@ def main(argv):
 					info_time = 0
 					p1_hp = 100
 					p2_hp = 100
+					p1_ani = -1
+					p2_ani = -1
 			marker_set = 0
 			cv2.rectangle(frame, (int(frame_size[1] * 0.3), int(frame_size[0] * 0.3)),
 										((int(frame_size[1] * 0.7)), int(frame_size[0] * 0.7)),
@@ -287,6 +427,8 @@ def main(argv):
 					info_time = 0
 					p1_hp = 100
 					p2_hp = 100
+					p1_ani = -1
+					p2_ani = -1
 			marker_set = 0
 			cv2.rectangle(frame, (int(frame_size[1] * 0.3), int(frame_size[0] * 0.3)),
 										((int(frame_size[1] * 0.7)), int(frame_size[0] * 0.7)),
@@ -295,10 +437,10 @@ def main(argv):
 									cv2.FONT_HERSHEY_DUPLEX, 5, (255, 255, 255), 2)
 
 
-		if information_visual == True:
-			for marker in markers:
-				marker.highlite_marker(frame)
-				print(marker.id, 'contours', marker.contours)
+		# if information_visual == True:
+		for marker in markers:
+			marker.highlite_marker(frame)
+			print(marker.id, 'contours', marker.contours)
 
 		with mp_hands.Hands(
 			model_complexity=0,
